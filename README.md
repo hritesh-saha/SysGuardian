@@ -117,4 +117,10 @@ The script's primary security value comes from distinguishing between routine in
 * Always review the `[UNKNOWN IP]` entries. If you see repeated attempts from the same IP, you should consider blocking it at your firewall.
 * The ANSI color codes may not render in all terminal emulators or when viewing the raw log file.
 
+## 👤 Author
+
+* **[API-Alchemist]**
+* **GitHub:** `[https://github.com/hritesh-saha]`
+* This script was developed for and is in active use monitoring the production environment for the [Zapnotes project](https://github.com/hritesh-saha/ZapNotes).
+
 <p align="center"><a href="https://github.com/hritesh-saha/SysGuardian/blob/main/LICENSE"><img src="https://img.shields.io/static/v1.svg?style=for-the-badge&label=License&message=BSD-3-Clause&logoColor=d9e0ee&colorA=363a4f&colorB=b7bdf8"/></a></p>
