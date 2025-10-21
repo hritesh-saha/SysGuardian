@@ -1,8 +1,8 @@
 #!/bin/bash
 # =====================================
-#  System Health & Security Audit Tool
-#  Author: Hritesh
-#  Version: 1.1 - WSL Compatible + Known IP Whitelist + Readable Tables
+#   System Health & Security Audit Tool
+#   Author: Hritesh
+#   Version: 1.0
 # =====================================
 
 # Color Codes
@@ -17,63 +17,99 @@ NC='\033[0m' # No Color
 # Create output file
 output="system_audit_report_$(date +%F_%H-%M-%S).txt"
 
-echo -e "${BOLD}${CYAN}===== SYSTEM AUDIT REPORT =====${NC}" | tee -a $output
-echo -e "Report Generated: $(date)" | tee -a $output
-echo -e "Host Name: $(hostname)" | tee -a $output
-echo -e "---------------------------------" | tee -a $output
+# --- Main Header ---
+TIMESTAMP=$(date)
+echo -e "${BOLD}${CYAN}=====================================================${NC}" | tee -a $output
+echo -e "${BOLD}${CYAN}    SYSTEM HEALTH & SECURITY AUDIT${NC}" | tee -a $output
+echo -e "${BOLD}${CYAN}    Timestamp: $TIMESTAMP${NC}" | tee -a $output
+echo -e "${BOLD}${CYAN}=====================================================${NC}" | tee -a $output
 
-# 1. System Health
-echo -e "\n${BOLD}${BLUE}===== 1. SYSTEM HEALTH =====${NC}" | tee -a $output
+# 1. System Resources
+echo -e "\n--- [ 📊 System Resources ] --------------------------\n" | tee -a $output
 
-CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{usage=$2+$4; printf("%.2f", usage)}')
+# --- CPU Check ---
+# Using user's thresholds: 50% WARN, 75% CRIT
+CPU_USAGE=$(top -bn1 | grep "Cpu(s)" | awk '{usage=$2+$4; printf("%.1f", usage)}')
+CPU_TAG="[OK]      " # 8 chars padding
 CPU_COLOR=$GREEN
-if (( $(echo "$CPU_USAGE > 75" | bc -l) )); then CPU_COLOR=$RED
-elif (( $(echo "$CPU_USAGE > 50" | bc -l) )); then CPU_COLOR=$YELLOW
+if (( $(echo "$CPU_USAGE > 75" | bc -l) )); then
+    CPU_TAG="[CRITICAL]"
+    CPU_COLOR=$RED
+elif (( $(echo "$CPU_USAGE > 50" | bc -l) )); then
+    CPU_TAG="[WARNING] " # 1 char padding
+    CPU_COLOR=$YELLOW
 fi
-echo -e "CPU Usage: ${CPU_COLOR}$CPU_USAGE%${NC}" | tee -a $output
+echo -e "${CPU_COLOR}${CPU_TAG}${NC} CPU Usage: $CPU_USAGE%" | tee -a $output
 
-MEM_USED=$(free -h | awk 'NR==2{print $3}')
-MEM_FREE=$(free -h | awk 'NR==2{print $4}')
-echo -e "Memory Used: ${YELLOW}$MEM_USED${NC}, Free: ${GREEN}$MEM_FREE${NC}" | tee -a $output
+# --- Memory Check ---
+# Using 90% CRIT, 75% WARN
+# Get human-readable values
+MEM_HUMAN=$(free -h | awk 'NR==2{print "Used: " $3 " / Total: " $2}')
+# Get values for calculation (in MiB)
+MEM_CALC=$(free -m | awk 'NR==2{print $3, $2}')
+MEM_USED_M=$(echo $MEM_CALC | awk '{print $1}')
+MEM_TOTAL_M=$(echo $MEM_CALC | awk '{print $2}')
+MEM_PERCENT=$(awk -v used="$MEM_USED_M" -v total="$MEM_TOTAL_M" 'BEGIN {if (total > 0) printf "%.1f", (used/total)*100; else print "0.0"}')
 
-DISK_TOTAL=$(df -h --total | grep total | awk '{print $2}')
-DISK_USED=$(df -h --total | grep total | awk '{print $3}')
-DISK_FREE=$(df -h --total | grep total | awk '{print $4}')
-DISK_PERCENT=$(df -h --total | grep total | awk '{print $5}' | tr -d '%')
+MEM_TAG="[OK]      " # 8 chars padding
+MEM_COLOR=$GREEN
+if (( $(echo "$MEM_PERCENT > 90" | bc -l) )); then
+    MEM_TAG="[CRITICAL]"
+    MEM_COLOR=$RED
+elif (( $(echo "$MEM_PERCENT > 75" | bc -l) )); then
+    MEM_TAG="[WARNING] " # 1 char padding
+    MEM_COLOR=$YELLOW
+fi
+echo -e "${MEM_COLOR}${MEM_TAG}${NC} Memory Usage: $MEM_PERCENT% ($MEM_HUMAN)" | tee -a $output
+
+# --- Disk Check ---
+# Using user's thresholds: 60% WARN, 80% CRIT
+# Get values for / filesystem (matches target format)
+DISK_STATS=$(df -h / | awk 'NR==2{print $5, $3, $2}') # Percent, Used, Total
+DISK_PERCENT_NUM=$(echo $DISK_STATS | awk '{print $1}' | tr -d '%')
+DISK_USED=$(echo $DISK_STATS | awk '{print $2}')
+DISK_TOTAL=$(echo $DISK_STATS | awk '{print $3}')
+
+DISK_TAG="[OK]      " # 8 chars padding
 DISK_COLOR=$GREEN
-if [ "$DISK_PERCENT" -gt 80 ]; then DISK_COLOR=$RED
-elif [ "$DISK_PERCENT" -gt 60 ]; then DISK_COLOR=$YELLOW
+if [ "$DISK_PERCENT_NUM" -gt 80 ]; then
+    DISK_TAG="[CRITICAL]"
+    DISK_COLOR=$RED
+elif [ "$DISK_PERCENT_NUM" -gt 60 ]; then
+    DISK_TAG="[WARNING] " # 1 char padding
+    DISK_COLOR=$YELLOW
 fi
-echo -e "Disk Usage: Total: $DISK_TOTAL, Used: $DISK_USED, Free: $DISK_FREE, Usage: ${DISK_COLOR}$DISK_PERCENT%${NC}" | tee -a $output
+echo -e "${DISK_COLOR}${DISK_TAG}${NC} Disk Usage (/): $DISK_PERCENT_NUM% (Used: $DISK_USED / Total: $DISK_TOTAL)" | tee -a $output
 
-# 2. Network Info
-echo -e "\n${BOLD}${BLUE}===== 2. NETWORK INFORMATION =====${NC}" | tee -a $output
-echo -e "${BOLD}Proto\tLocal Address\tPort\tState${NC}" | tee -a $output
-ss -tuln | tail -n +2 | awk '{
-    split($5,a,":");
-    port=a[length(a)];
-    state=($1=="LISTEN")?"LISTENING":"ESTABLISHED";
-    printf "%s\t%s\t%s\t%s\n",$1,$4,port,state
-}' | tee -a $output
 
-# 3. Firewall Status (WSL Detection)
-echo -e "\n${BOLD}${BLUE}===== 3. FIREWALL STATUS =====${NC}" | tee -a $output
+# 2. System Uptime
+echo -e "\n--- [ ⏱️ System Uptime ] -----------------------------\n" | tee -a $output
+uptime | sed 's/^[ \t]*//' | tee -a $output # `sed` removes leading whitespace
+
+# 3. Firewall Status
+echo -e "\n--- [ 🔥 Firewall Status ] ---------------------------\n" | tee -a $output
+# User's WSL detection logic
 if grep -qEi "(Microsoft|WSL)" /proc/version &> /dev/null ; then
     echo -e "${YELLOW}Firewall check skipped (running in WSL)${NC}" | tee -a $output
 else
-    FIREWALL=$(sudo ufw status | grep -i "Status" | awk '{print $2}')
-    if [[ "$FIREWALL" == "active" ]]; then FIREWALL_COLOR=$GREEN; else FIREWALL_COLOR=$RED; fi
-    echo -e "Status: ${FIREWALL_COLOR}$FIREWALL${NC}" | tee -a $output
+    # Show full status table as in the target example
+    sudo ufw status | tee -a $output
 fi
 
-# 4. Security Log Check with Whitelist
-echo -e "\n${BOLD}${BLUE}===== 4. SECURITY LOG CHECK =====${NC}" | tee -a $output
-echo -e "${BOLD}Time\t\tUser\tIP${NC}" | tee -a $output
+# 4. Network Info
+echo -e "\n--- [ 🌐 Active Network Connections ] -----------------\n" | tee -a $output
+# header to match 'ss' command
+echo -e "${BOLD}Netid  State   Recv-Q  Send-Q    Local Address:Port     Peer Address:Port${NC}" | tee -a $output
+# ss -tuna (tcp, udp, numeric, all) gives the exact format needed
+ss -tuna | tail -n +2 | tee -a $output
 
-# Define known/trusted IPs (localhost, private networks, common trusted addresses)
+# 5. Security Log Check
+echo -e "\n--- [ 🔐 Failed Login Analysis (Last 5) ] -----------\n" | tee -a $output
+
+# User's trusted IP list
 trusted_ips=("127.0.0.1" "::1" "local" "192.168." "10." "172.16." "172.17." "172.18." "172.19." "172.20." "172.21." "172.22." "172.23." "172.24." "172.25." "172.26." "172.27." "172.28." "172.29." "172.30." "172.31.")
 
-# Function to check if an IP matches the whitelist
+# User's IP check function
 is_trusted_ip() {
     local ip=$1
     for trusted in "${trusted_ips[@]}"; do
@@ -84,21 +120,20 @@ is_trusted_ip() {
     return 1  # unknown
 }
 
-# Format failed login attempts
+# Read log file
 if [ -f /var/log/auth.log ]; then
     sudo grep "Failed password" /var/log/auth.log | tail -5 | while read line; do
-        time=$(echo $line | awk '{print $1" "$2" "$3}')
-        user=$(echo $line | awk '{for(i=1;i<=NF;i++){if($i=="for"){print $(i+1)}}}')
+        # Extract IP
         ip=$(echo $line | awk '{for(i=1;i<=NF;i++){if($i=="from"){print $(i+1)}}}')
-        if [[ -z "$user" ]]; then user="unknown"; fi
         if [[ -z "$ip" ]]; then ip="local"; fi
 
+        # Format output to match target
         if [[ "$ip" == "127.0.0.1" || "$ip" == "::1" || "$ip" == "local" ]]; then
-            echo -e "$time\t$user\t$ip (LOCAL)" | tee -a $output
+            echo -e "${GREEN}[LOCALHOST]${NC}  $line" | tee -a $output
         elif is_trusted_ip "$ip"; then
-            echo -e "$time\t$user\t$ip (TRUSTED)" | tee -a $output
+            echo -e "${GREEN}[LOCAL IP]${NC}   $line" | tee -a $output
         else
-            echo -e "${RED}$time\t$user\t$ip (UNKNOWN)${NC}" | tee -a $output
+            echo -e "${RED}[UNKNOWN IP]${NC} $line" | tee -a $output
         fi
 
     done
@@ -106,10 +141,10 @@ else
     echo -e "${YELLOW}No auth.log found (WSL or restricted permissions)${NC}" | tee -a $output
 fi
 
-# 5. System Uptime
-echo -e "\n${BOLD}${BLUE}===== 5. SYSTEM UPTIME =====${NC}" | tee -a $output
-echo -e "Time since last reboot:" | tee -a $output
-uptime | tee -a $output
 
-echo -e "\n${BOLD}${CYAN}=================================${NC}" | tee -a $output
-echo -e "Audit Completed. Report saved at: ${YELLOW}$output${NC}" | tee -a $output
+# --- Footer ---
+echo -e "\n${BOLD}${CYAN}=====================================================${NC}" | tee -a $output
+echo -e "    AUDIT COMPLETE" | tee -a $output
+echo -e "    Report saved to: ${YELLOW}$output${NC}" | tee -a $output
+echo -e "${BOLD}${CYAN}=====================================================${NC}" | tee -a $output
+sed -i -E 's/\x1b\[[0-9;]*[mK]//g' "$output"
